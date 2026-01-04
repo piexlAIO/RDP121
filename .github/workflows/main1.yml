@@ -1,11 +1,11 @@
-name: RDP2
+name: windows10
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
-    runs-on: windows-latest
+    runs-on: windows-10
     timeout-minutes: 9999999
 
     steps:
