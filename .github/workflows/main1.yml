@@ -82,10 +82,10 @@ jobs:
       
       - name: Verify RDP Accessibility
         run: |
-          Write-Host "Tailscale IP: 100.104.23.112"
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
           # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-          $testResult = Test-NetConnection -ComputerName 100.104.23.112 -Port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
               exit 1
@@ -95,7 +95,7 @@ jobs:
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: 100.104.23.112"
+          Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: piexlAIO"
           Write-Host "Password: As567890"
           Write-Host "==================`n"
