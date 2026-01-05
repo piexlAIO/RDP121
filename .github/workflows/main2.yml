@@ -1,4 +1,4 @@
-name: windows10
+name: windows10 2016
 
 on:
   workflow_dispatch:
