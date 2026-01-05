@@ -1,11 +1,11 @@
-name: windows10 2016
+name: windows10 2019
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
-    runs-on: windows-2016
+    runs-on: windows-2019
     timeout-minutes: 999999999999999999999
 
     steps:
