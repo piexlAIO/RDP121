@@ -1,0 +1,101 @@
+name: ubuntu-rdp-tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: -1
+
+    steps:
+      - name: Prepare environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$(lsb_release -cs).noarmor.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/tailscale.list
+          sudo apt-get update -y
+          sudo apt-get install -y tailscale
+
+      - name: Install xrdp and desktop (XFCE)
+        run: |
+          # Install a lightweight desktop and xrdp
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies xorg dbus-x11 xrdp
+          # Set Xfce as default session for xrdp
+          echo "startxfce4" | sudo tee /etc/skel/.xsession
+          sudo sed -i '/^#new_cursors=/a new_cursors=true' /etc/xrdp/xrdp.ini || true
+          sudo systemctl enable xrdp --now
+
+      - name: Create RDP user
+        run: |
+          USERNAME="piexlAIO"
+          PASSWORD="As567890"
+          if id "$USERNAME" &>/dev/null; then
+            echo "User $USERNAME already exists"
+          else
+            sudo useradd -m -s /bin/bash "$USERNAME"
+            echo "$USERNAME:$PASSWORD" | sudo chpasswd
+            sudo usermod -aG sudo,xrdp "$USERNAME"
+          fi
+          echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
+
+      - name: Configure firewall (ufw) to allow RDP
+        run: |
+          # Ensure ufw exists, allow 3389
+          sudo apt-get install -y ufw
+          sudo ufw --force enable
+          sudo ufw allow 3389/tcp
+          sudo ufw reload
+
+      - name: Bring up Tailscale
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          if [ -z "$TAILSCALE_AUTH_KEY" ]; then
+            echo "Missing TAILSCALE_AUTH_KEY secret"
+            exit 1
+          fi
+          sudo tailscale up --authkey="$TAILSCALE_AUTH_KEY" --hostname=gh-runner-90001 || {
+            echo "tailscale up failed"; sudo tailscale status; exit 1
+          }
+          # Wait for an IP
+          for i in {1..12}; do
+            TS_IP=$(sudo tailscale ip -4 || true)
+            if [ -n "$TS_IP" ]; then
+              echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$TS_IP" ]; then
+            echo "Tailscale IP not assigned"; sudo tailscale status; exit 1
+          fi
+
+      - name: Verify RDP accessibility
+        run: |
+          echo "Tailscale IP: $TAILSCALE_IP"
+          # Check tcp connectivity to port 3389 locally (netcat)
+          sudo apt-get install -y netcat
+          if ! nc -zv "$TAILSCALE_IP" 3389; then
+            echo "TCP connection to RDP port 3389 failed" >&2
+            exit 1
+          fi
+          echo "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          echo
+          echo "=== RDP ACCESS ==="
+          echo "Address: $TAILSCALE_IP"
+          echo "Username: piexlAIO"
+          echo "Password: As567890"
+          echo "=================="
+          # Keep workflow alive until manually cancelled
+          while true; do
+            echo "[$(date)] RDP Active - cancel workflow to terminate"
+            sleep 300
+          done
