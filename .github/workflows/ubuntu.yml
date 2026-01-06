@@ -74,17 +74,18 @@ jobs:
           if [ -z "$TS_IP" ]; then
             echo "Tailscale IP not assigned"; sudo tailscale status; exit 1
           fi
-
-      - name: Verify RDP accessibility
+      - name: Verify RDP accessibility (using ss)
         run: |
           echo "Tailscale IP: $TAILSCALE_IP"
-          # Check tcp connectivity to port 3389 locally (netcat)
-          sudo apt-get install -y netcat
-          if ! nc -zv "$TAILSCALE_IP" 3389; then
-            echo "TCP connection to RDP port 3389 failed" >&2
+          # check listener on port 3389 locally
+          if ! ss -tn "( sport = :3389 )" | grep -q LISTEN; then
+            echo "No local LISTEN on port 3389" >&2
             exit 1
           fi
-          echo "TCP connectivity successful!"
+          # check TCP connect to Tailscale IP
+          timeout 5 bash -c "</dev/tcp/${TAILSCALE_IP}/3389" && echo "TCP connectivity successful!" || { echo "TCP connection failed" >&2; exit 1; }
+
+      
 
       - name: Maintain Connection
         run: |
