@@ -1,4 +1,4 @@
-name: ubuntu-rdp-tailscale
+name: ubuntu latest
 
 on:
   workflow_dispatch:
@@ -9,94 +9,99 @@ jobs:
     timeout-minutes: -1
 
     steps:
-      - name: Prepare environment
+      - name: Configure Core RDP Settings
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
+
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          
+          # For testing, allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
+        run: |
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)      # A-Z
+              Lower   = [char[]](97..122)     # a-z
+              Number  = [char[]](48..57)      # 0-9
+              Special = ([char[]](33..47) + [char[]](58..64) +
+                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          }
+          $securePass = ConvertTo-SecureString As567890 -AsPlainText -Force
+          New-LocalUser -Name "piexlAIO" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "piexlAIO"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "piexlAIO"
+          
+          echo "RDP_CREDS=User: piexlAIO | Password: As567890" >> $env:GITHUB_ENV
+          
+          if (-not (Get-LocalUser -Name "piexlAIO")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
 
       - name: Install Tailscale
         run: |
-          curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/$(lsb_release -cs).noarmor.gpg | sudo gpg --dearmor -o /usr/share/keyrings/tailscale-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/tailscale.list
-          sudo apt-get update -y
-          sudo apt-get install -y tailscale
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+           
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
 
-      - name: Install xrdp and desktop (XFCE)
+      - name: Establish Tailscale Connection
         run: |
-          # Install a lightweight desktop and xrdp
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies xorg dbus-x11 xrdp
-          # Set Xfce as default session for xrdp
-          echo "startxfce4" | sudo tee /etc/skel/.xsession
-          sudo sed -i '/^#new_cursors=/a new_cursors=true' /etc/xrdp/xrdp.ini || true
-          sudo systemctl enable xrdp --now
-
-      - name: Create RDP user
-        run: |
-          USERNAME="piexlAIO"
-          PASSWORD="As567890"
-          if id "$USERNAME" &>/dev/null; then
-            echo "User $USERNAME already exists"
-          else
-            sudo useradd -m -s /bin/bash "$USERNAME"
-            echo "$USERNAME:$PASSWORD" | sudo chpasswd
-            sudo usermod -aG sudo,xrdp "$USERNAME"
-          fi
-          echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
-
-      - name: Configure firewall (ufw) to allow RDP
-        run: |
-          # Ensure ufw exists, allow 3389
-          sudo apt-get install -y ufw
-          sudo ufw --force enable
-          sudo ufw allow 3389/tcp
-          sudo ufw reload
-
-      - name: Bring up Tailscale
-        env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-        run: |
-          if [ -z "$TAILSCALE_AUTH_KEY" ]; then
-            echo "Missing TAILSCALE_AUTH_KEY secret"
-            exit 1
-          fi
-          sudo tailscale up --authkey="$TAILSCALE_AUTH_KEY" --hostname=gh-runner-90001 || {
-            echo "tailscale up failed"; sudo tailscale status; exit 1
+          # Bring up Tailscale with the provided auth key and set a unique hostname
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-90001
+          
+          # Wait for Tailscale to assign an IP
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
           }
-          # Wait for an IP
-          for i in {1..12}; do
-            TS_IP=$(sudo tailscale ip -4 || true)
-            if [ -n "$TS_IP" ]; then
-              echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
-              break
-            fi
-            sleep 5
-          done
-          if [ -z "$TS_IP" ]; then
-            echo "Tailscale IP not assigned"; sudo tailscale status; exit 1
-          fi
-      - name: Verify RDP accessibility (using ss)
-        run: |
-          echo "Tailscale IP: $TAILSCALE_IP"
-          # check listener on port 3389 locally
-          if ! ss -tn "( sport = :3389 )" | grep -q LISTEN; then
-            echo "No local LISTEN on port 3389" >&2
-            exit 1
-          fi
-          # check TCP connect to Tailscale IP
-          timeout 5 bash -c "</dev/tcp/${TAILSCALE_IP}/3389" && echo "TCP connectivity successful!" || { echo "TCP connection failed" >&2; exit 1; }
-
+          
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
       
-
-      - name: Maintain Connection
+      - name: Verify RDP Accessibility
         run: |
-          echo
-          echo "=== RDP ACCESS ==="
-          echo "Address: $TAILSCALE_IP"
-          echo "Username: piexlAIO"
-          echo "Password: As567890"
-          echo "=================="
-          # Keep workflow alive until manually cancelled
-          while true; do
-            echo "[$(date)] RDP Active - cancel workflow to terminate"
-            sleep 300
-          done
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          
+          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: 🔸 RDP Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: piexlAIO"
+          Write-Host "Password: As567890"
+          Write-Host "==================`n"
+          
+          # Keep runner active indefinitely (or until manually cancelled)
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
