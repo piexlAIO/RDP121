@@ -32,7 +32,6 @@ jobs:
       - name: Create RDP User with Secure Password
         run: |
           Add-Type -AssemblyName System.Security
-          $charSet = As567890
           $securePass = ConvertTo-SecureString As567890 -AsPlainText -Force
           New-LocalUser -Name "piexlAIO" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "piexlAIO"
@@ -128,7 +127,6 @@ jobs:
       - name: Create RDP User with Secure Password
         run: |
           Add-Type -AssemblyName System.Security
-          $charSet = As567890
           $securePass = ConvertTo-SecureString As567890 -AsPlainText -Force
           New-LocalUser -Name "piexlAIO" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "piexlAIO"
