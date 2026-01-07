@@ -63,7 +63,7 @@ jobs:
       - name: Establish Tailscale Connection
         run: |
           # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=RDP-windows-server-2019
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=RDP-$env:GITHUB_RUN_ID
           
           # Wait for Tailscale to assign an IP
           $tsIP = $null
@@ -95,6 +95,7 @@ jobs:
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "hostname: RDP-$env:GITHUB_RUN_ID"
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: piexlAIO"
           Write-Host "Password: As567890"
@@ -164,7 +165,7 @@ jobs:
       - name: Establish Tailscale Connection
         run: |
           # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=RDP-windows-server-2025
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=RDP-$env:GITHUB_RUN_ID
           
           # Wait for Tailscale to assign an IP
           $tsIP = $null
@@ -196,6 +197,7 @@ jobs:
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "hostname: RDP-$env:GITHUB_RUN_ID"
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: piexlAIO"
           Write-Host "Password: As567890"
